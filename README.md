@@ -28,7 +28,7 @@
 
 1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com)
 2. 进入 Workers & Pages → Create application → Start with Hello World!
-3. 给 Worker 命名（如 telegram-verify-bot）
+3. 给 Worker 命名（如 tgbot）
 4. 点击 Deploy
 
 #### 配置环境变量
