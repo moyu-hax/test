@@ -120,12 +120,13 @@ function forwardMessage(msg) {
 
 /**
  * 设置管理员菜单命令
+ * ✅ 已更新菜单描述，提示支持 [UID]
  */
 async function setAdminCommands() {
   const commands = [
-    { command: 'block', description: '屏蔽当前用户' },
-    { command: 'unblock', description: '解除屏蔽' },
-    { command: 'checkblock', description: '检查屏蔽状态' },
+    { command: 'block', description: '屏蔽用户 [UID] 或回复' },
+    { command: 'unblock', description: '解除屏蔽 [UID] 或回复' },
+    { command: 'checkblock', description: '检查屏蔽 [UID] 或回复' },
     { command: 'addwhite', description: '添加白名单 [UID]' },
     { command: 'removewhite', description: '移除白名单 [UID]' },
     { command: 'checkwhite', description: '检查白名单 [UID]' },
@@ -210,10 +211,17 @@ async function onMessage(message) {
   // 管理员命令
   if (message.chat.id.toString() === ADMIN_UID) {
     if (/^\/reloadblock$/.test(message.text)) return handleReloadBlocklist(message);
+    
+    // 白名单指令
     if (/^\/addwhite(?:\s+(\d+))?$/.test(message.text)) return handleAddWhitelist(message);
     if (/^\/removewhite(?:\s+(\d+))?$/.test(message.text)) return handleRemoveWhitelist(message);
     if (/^\/checkwhite(?:\s+(\d+))?$/.test(message.text)) return handleCheckWhitelist(message);
     if (/^\/listwhite$/.test(message.text)) return handleListWhitelist(message);
+
+    // ✅ 屏蔽指令（支持正则参数）
+    if (/^\/block(?:\s+(\d+))?$/.test(message.text)) return handleBlock(message);
+    if (/^\/unblock(?:\s+(\d+))?$/.test(message.text)) return handleUnBlock(message);
+    if (/^\/checkblock(?:\s+(\d+))?$/.test(message.text)) return checkBlock(message);
 
     if (!message?.reply_to_message?.chat) {
       return sendMessage({
@@ -221,10 +229,6 @@ async function onMessage(message) {
         text: '请回复一条转发的消息进行操作，或使用菜单命令。'
       });
     }
-
-    if (/^\/block$/.test(message.text)) return handleBlock(message);
-    if (/^\/unblock$/.test(message.text)) return handleUnBlock(message);
-    if (/^\/checkblock$/.test(message.text)) return checkBlock(message);
 
     const guestChatId = await lan.get('msg-map-' + message?.reply_to_message.message_id);
     if (guestChatId) {
@@ -241,6 +245,7 @@ async function onMessage(message) {
 
 /**
  * 从消息或命令参数中提取目标 UID
+ * (通用函数：既支持 /cmd 12345，也支持回复消息提取)
  */
 async function getTargetUserId(message) {
   const match = message.text.match(/\/\w+\s+(\d+)/);
@@ -432,7 +437,6 @@ async function onCallbackQuery(callbackQuery) {
           reply_markup: undefined
         }));
       } else {
-        // 验证失败，刷新题目
         const { question, answer, options } = generateLogicProblem();
         
         await lan.put('verify-' + userId, answer, { expirationTtl: VERIFICATION_TTL });
@@ -507,18 +511,15 @@ async function handleGuestMessage(message) {
       return sendMessage({ chat_id: chatId, text: 'You are blocked' });
     }
 
-    // 验证检查 (✅ 已修改：如果未验证，始终发送/更新题目，解决死循环问题)
+    // 验证检查
     const verified = await lan.get('verified-' + chatId);
     if (!verified) {
-      // 获取当前尝试次数（保留次数，防止重置）
       let attempts = await lan.get('verify-attempts-' + chatId);
       if (!attempts) attempts = '0';
 
-      // 生成新题目
       const { question, answer, options } = generateLogicProblem();
       
       await lan.put('verify-' + chatId, answer, { expirationTtl: VERIFICATION_TTL });
-      // 更新TTL，但不重置尝试次数
       await lan.put('verify-attempts-' + chatId, attempts, { expirationTtl: VERIFICATION_TTL });
 
       const keyboard = {
@@ -599,38 +600,75 @@ async function handleNotify(message, chatId) {
   }
 }
 
+// ✅ 修改后的 handleBlock，支持参数
 async function handleBlock(message) {
   try {
-    const guestChatId = await lan.get('msg-map-' + message.reply_to_message.message_id);
-    if (!guestChatId) return sendMessage({ chat_id: ADMIN_UID, text: '❌ 无法获取用户ID' });
-    if (guestChatId === ADMIN_UID) return sendMessage({ chat_id: ADMIN_UID, text: '不能屏蔽自己' });
+    const guestChatId = await getTargetUserId(message);
+
+    if (!guestChatId) {
+      return sendMessage({
+        chat_id: ADMIN_UID,
+        text: '❌ 未找到目标。请回复消息或使用: /block <UID>'
+      });
+    }
+
+    if (guestChatId === ADMIN_UID) {
+      return sendMessage({
+        chat_id: ADMIN_UID,
+        text: '不能屏蔽自己'
+      });
+    }
 
     await lan.put('isblocked-' + guestChatId, 'true');
-    return sendMessage({ chat_id: ADMIN_UID, text: `UID: ${guestChatId} 屏蔽成功` });
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: `UID: ${guestChatId} 屏蔽成功`
+    });
   } catch (err) {
     console.error('处理屏蔽错误:', err);
   }
 }
 
+// ✅ 修改后的 handleUnBlock，支持参数
 async function handleUnBlock(message) {
   try {
-    const guestChatId = await lan.get('msg-map-' + message.reply_to_message.message_id);
-    if (!guestChatId) return sendMessage({ chat_id: ADMIN_UID, text: '❌ 无法获取用户ID' });
+    const guestChatId = await getTargetUserId(message);
+
+    if (!guestChatId) {
+      return sendMessage({
+        chat_id: ADMIN_UID,
+        text: '❌ 未找到目标。请回复消息或使用: /unblock <UID>'
+      });
+    }
 
     await lan.delete('isblocked-' + guestChatId);
-    return sendMessage({ chat_id: ADMIN_UID, text: `UID: ${guestChatId} 解除屏蔽成功` });
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: `UID: ${guestChatId} 解除屏蔽成功`
+    });
   } catch (err) {
     console.error('处理解除屏蔽错误:', err);
   }
 }
 
+// ✅ 修改后的 checkBlock，支持参数
 async function checkBlock(message) {
   try {
-    const guestChatId = await lan.get('msg-map-' + message.reply_to_message.message_id);
-    if (!guestChatId) return sendMessage({ chat_id: ADMIN_UID, text: '❌ 无法获取用户ID' });
+    const guestChatId = await getTargetUserId(message);
+
+    if (!guestChatId) {
+      return sendMessage({
+        chat_id: ADMIN_UID,
+        text: '❌ 未找到目标。请回复消息或使用: /checkblock <UID>'
+      });
+    }
 
     const blocked = await lan.get('isblocked-' + guestChatId);
-    return sendMessage({ chat_id: ADMIN_UID, text: `UID: ${guestChatId} ${blocked === 'true' ? '被屏蔽' : '没有被屏蔽'}` });
+
+    return sendMessage({
+      chat_id: ADMIN_UID,
+      text: `UID: ${guestChatId} ${blocked === 'true' ? '被屏蔽' : '没有被屏蔽'}`
+    });
   } catch (err) {
     console.error('检查屏蔽状态错误:', err);
   }
