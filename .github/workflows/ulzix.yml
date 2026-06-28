@@ -1,0 +1,66 @@
+name: Ulzix Auto Checkin
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 0,8,16 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable WARP
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual
+          mode: client
+
+      - name: Configure DNS and verify WARP
+        run: |
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+          sudo chattr +i /etc/resolv.conf 2>/dev/null || true
+          sleep 3
+
+          for i in {1..30}; do
+            status=$(curl -s --max-time 5 https://www.cloudflare.com/cdn-cgi/trace | grep -oP 'warp=\K\w+' || echo unknown)
+            [[ "$status" =~ ^(on|plus)$ ]] && echo "WARP 已连接" && break
+            echo "WARP 连接中... ($i/30)"
+            sleep 2
+          done
+          echo -n "出口 IP: " && curl -s https://api.ipify.org && echo
+          curl -s https://ipinfo.io
+
+      - name: Setup environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
+        run: |
+          echo "[setup] apt update"
+          sudo -E apt-get update
+          echo "[setup] apt install"
+          sudo -E apt-get install -y -o Dpkg::Use-Pty=0 xvfb python3 python3-pip python3-tk python3-dev google-chrome-stable fontconfig fonts-noto-cjk fonts-wqy-zenhei fonts-wqy-microhei
+          echo "[setup] pip install python deps"
+          python3 -m pip install --upgrade pip
+          python3 -m pip install seleniumbase pyvirtualdisplay requests
+          echo "[setup] rebuild font cache"
+          fc-cache -fv
+
+      - name: Check IP
+        run: |
+          curl -s https://api.ipify.org && echo
+          curl -s https://ipinfo.io
+
+      - name: Run python checkin flow
+        env:
+          ACCOUNTS: ${{ secrets.ACCOUNTS }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python3 checkinulzix.py
